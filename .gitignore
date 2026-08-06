@@ -1,0 +1,4 @@
+/gatehouse
+*.test
+.DS_Store
+coverage.out

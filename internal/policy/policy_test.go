@@ -1,0 +1,97 @@
+package policy
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+func TestLoad(t *testing.T) {
+	d := t.TempDir()
+	p := filepath.Join(d, "p.json")
+	if err := os.WriteFile(p, []byte(`{"version":1,"maxFileSize":10}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load(p)
+	if err != nil || got.MaxFileSize != 10 {
+		t.Fatalf("got %+v, %v", got, err)
+	}
+}
+func TestRejectUnknownAndVersion(t *testing.T) {
+	for _, s := range []string{
+		`{"version":1,"wat":1}`,
+		`{"version":2}`,
+		`{"Version":1}`,
+		`{"version":1,"provenance":{"Required":true}}`,
+	} {
+		d := t.TempDir()
+		p := filepath.Join(d, "p")
+		os.WriteFile(p, []byte(s), 0600)
+		if _, err := Load(p); err == nil {
+			t.Fatalf("accepted %s", s)
+		}
+	}
+}
+func TestRejectDuplicateKeysAndOversizedPolicy(t *testing.T) {
+	d := t.TempDir()
+	for name, data := range map[string][]byte{
+		"duplicate": []byte(`{"version":1,"version":1}`),
+		"nested":    []byte(`{"version":1,"provenance":{"required":true,"required":false}}`),
+		"oversized": []byte(`{"version":1,"padding":"` + strings.Repeat("x", MaxPolicySize) + `"}`),
+	} {
+		path := filepath.Join(d, name)
+		if err := os.WriteFile(path, data, 0600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Load(path); err == nil {
+			t.Errorf("accepted %s policy", name)
+		}
+	}
+}
+
+func TestValidateRequiredSubjects(t *testing.T) {
+	if err := Validate(Policy{Version: 1, Provenance: Provenance{Globs: []string{"provenance.json"}, RequiredSubjects: []string{"..artifact"}}}); err != nil {
+		t.Fatal(err)
+	}
+	for _, subjects := range [][]string{{"../artifact"}, {"artifact", "dir/../artifact"}} {
+		if err := Validate(Policy{Version: 1, Provenance: Provenance{Globs: []string{"provenance.json"}, RequiredSubjects: subjects}}); err == nil {
+			t.Errorf("accepted subjects %#v", subjects)
+		}
+	}
+}
+
+func TestValidateRejectsChecksWithoutSelectors(t *testing.T) {
+	tests := []Policy{
+		{Version: 1, SBOM: SBOM{Required: true}},
+		{Version: 1, SBOM: SBOM{Formats: []string{"cyclonedx"}}},
+		{Version: 1, Provenance: Provenance{Repository: "example/project"}},
+		{Version: 1, Provenance: Provenance{RequiredSubjects: []string{"artifact"}}},
+	}
+	for _, p := range tests {
+		if err := Validate(p); err == nil {
+			t.Errorf("accepted ineffective policy %+v", p)
+		}
+	}
+}
+
+func TestValidateRejectsDuplicateAndNonPortableGlobs(t *testing.T) {
+	for _, globs := range [][]string{{"*.json", "*.json"}, {""}, {"["}} {
+		p := Policy{Version: 1, RequiredGlobs: globs}
+		if err := Validate(p); err == nil {
+			t.Errorf("accepted globs %#v", globs)
+		}
+	}
+}
+
+func FuzzLoad(f *testing.F) {
+	f.Add([]byte(`{"version":1}`))
+	f.Fuzz(func(t *testing.T, b []byte) {
+		d := t.TempDir()
+		p := filepath.Join(d, "p")
+		if os.WriteFile(p, b, 0600) != nil {
+			return
+		}
+		_, _ = Load(p)
+	})
+}

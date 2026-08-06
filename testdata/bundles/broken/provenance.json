@@ -1,0 +1,1 @@
+{"subject":[{"name":"artifact.json","digest":{"sha256":"0000000000000000000000000000000000000000000000000000000000000000"}}],"predicate":{"repository":"attacker/fork","ref":"refs/heads/feature","workflow":"untrusted.yml"}}

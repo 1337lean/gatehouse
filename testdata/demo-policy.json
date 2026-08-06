@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "checksums": "SHA256SUMS",
+  "allowedExtensions": [".json", ".md"],
+  "maxFileSize": 1048576,
+  "requiredGlobs": ["README*"],
+  "sbom": {
+    "required": true,
+    "globs": ["*.cdx.json"],
+    "formats": ["cyclonedx"]
+  },
+  "provenance": {
+    "required": true,
+    "globs": ["provenance.json"],
+    "repository": "1337lean/gatehouse",
+    "ref": "refs/heads/main",
+    "workflow": "release.yml",
+    "requiredSubjects": ["artifact.json"]
+  }
+}

@@ -1,0 +1,9 @@
+# Threat model
+
+Gatehouse treats policies as trusted configuration and bundle contents as hostile.
+
+Mitigated threats include modified or missing checksum subjects, normalized duplicate checksum entries, disallowed executable extensions, oversized files, missing expected artifacts, malformed or duplicate-key SBOM/provenance JSON, provenance that names absent or modified subjects, provenance constraints spoofed at the wrong JSON location, missing required provenance subject coverage, directory traversal in manifest/subject paths, and symlink or other non-regular-file escape. Policy validation rejects configured SBOM/provenance checks without selectors. Hostile terminal control characters are quoted in human reports, and escaping paths are omitted from SARIF artifact locations.
+
+Gatehouse never executes files, follows bundle symlinks, or uses the network. Bundle access is anchored to an opened `os.Root`, and each file is checked as the same regular file before and after it is opened. Traversal stops after 100,000 filesystem entries. Policy decoding rejects files larger than 1 MiB, unknown fields, and duplicate keys. Checksum manifests and JSON metadata are limited to 16 MiB; artifact hashing is streamed and cached, and files over the configured `maxFileSize` are not parsed or hashed. Checks use SHA-256.
+
+Out of scope: proving signer identity or signature validity, malware detection, complete semantic validation of all SBOM specification revisions, in-place content mutation by a local attacker after a file is opened, filesystem hard-link aliasing, archive extraction safety, and authenticity of the policy itself. Root anchoring and file-identity checks prevent pathname replacement from escaping the selected bundle, but they do not make a mutable filesystem snapshot atomic. Run against an immutable snapshot, authenticate the policy separately, and pair Gatehouse with a signature/transparency verifier where origin assurance is required.

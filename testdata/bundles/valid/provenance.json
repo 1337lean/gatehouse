@@ -1,0 +1,1 @@
+{"subject":[{"name":"artifact.json","digest":{"sha256":"d3eaf69a3da1dd12961676541d6d299bb0572476211e92fafbf327806363cc7f"}}],"predicate":{"repository":"1337lean/gatehouse","ref":"refs/heads/main","workflow":"release.yml"}}

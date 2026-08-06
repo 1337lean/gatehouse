@@ -1,0 +1,5 @@
+# Architecture
+
+`cmd/gatehouse` is a thin executable. `internal/app` parses commands and maps outcomes to stable exit codes; policy initialization uses exclusive creation or an atomic replacement so `--force` does not truncate a symlink target. `internal/policy` strictly decodes and semantically validates policy v1. `internal/verify` anchors the bundle with `os.Root`, walks it once, applies file controls, verifies streamed SHA-256 manifests, identifies bounded SBOM documents, and binds provenance subjects to local bytes. `internal/report` renders the same findings as human text, JSON, or SARIF 2.1.0; human paths are quoted and unsafe relative paths are not emitted as SARIF artifact locations.
+
+All runtime code uses the Go standard library. Verification is local and deterministic: no plugins, shell commands, network requests, archive extraction, or dynamic loading occur. Findings use stable rule identifiers so automation can consume JSON and SARIF output. Bundle traversal is capped at 100,000 filesystem entries; checksum manifests and JSON metadata are capped at 16 MiB each.
