@@ -5,9 +5,13 @@ package distcheck
 import (
 	"archive/tar"
 	"archive/zip"
+	"bytes"
 	"compress/gzip"
 	"context"
 	"crypto/sha256"
+	"debug/elf"
+	"debug/macho"
+	"debug/pe"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -270,6 +274,9 @@ func inspectArchive(item archive) ([]byte, error) {
 		if !mode.IsRegular() {
 			return fmt.Errorf("required archive entry %q is not regular", clean)
 		}
+		if size == 0 {
+			return fmt.Errorf("required archive entry %q is empty", clean)
+		}
 		required[clean] = true
 		if clean == executableName {
 			executable, err = io.ReadAll(io.LimitReader(reader, maxEntryBytes+1))
@@ -278,6 +285,17 @@ func inspectArchive(item archive) ([]byte, error) {
 			}
 			if int64(len(executable)) != size {
 				return fmt.Errorf("executable size changed while reading")
+			}
+			if err := validateExecutable(executable, item.target); err != nil {
+				return err
+			}
+		} else {
+			read, err := io.Copy(io.Discard, io.LimitReader(reader, maxEntryBytes+1))
+			if err != nil {
+				return fmt.Errorf("read required archive entry %q: %w", clean, err)
+			}
+			if read != size {
+				return fmt.Errorf("required archive entry %q size changed while reading", clean)
 			}
 		}
 		return nil
@@ -298,6 +316,48 @@ func inspectArchive(item archive) ([]byte, error) {
 		}
 	}
 	return executable, nil
+}
+
+func validateExecutable(data []byte, target target) error {
+	invalid := func() error {
+		return fmt.Errorf("executable is not a %s/%s binary", target.os, target.arch)
+	}
+
+	switch target.os {
+	case "linux":
+		executable, err := elf.NewFile(bytes.NewReader(data))
+		if err != nil || executable.Class != elf.ELFCLASS64 || executable.Data != elf.ELFDATA2LSB || (executable.Type != elf.ET_EXEC && executable.Type != elf.ET_DYN) {
+			return invalid()
+		}
+		expected := map[string]elf.Machine{"amd64": elf.EM_X86_64, "arm64": elf.EM_AARCH64}[target.arch]
+		if expected == elf.EM_NONE || executable.Machine != expected {
+			return invalid()
+		}
+	case "darwin":
+		executable, err := macho.NewFile(bytes.NewReader(data))
+		if err != nil || executable.Type != macho.TypeExec {
+			return invalid()
+		}
+		expected := map[string]macho.Cpu{"amd64": macho.CpuAmd64, "arm64": macho.CpuArm64}[target.arch]
+		if expected == 0 || executable.Cpu != expected {
+			return invalid()
+		}
+	case "windows":
+		executable, err := pe.NewFile(bytes.NewReader(data))
+		if err != nil || executable.Characteristics&pe.IMAGE_FILE_EXECUTABLE_IMAGE == 0 {
+			return invalid()
+		}
+		if _, ok := executable.OptionalHeader.(*pe.OptionalHeader64); !ok {
+			return invalid()
+		}
+		expected := map[string]uint16{"amd64": 0x8664, "arm64": 0xaa64}[target.arch]
+		if expected == 0 || executable.Machine != expected {
+			return invalid()
+		}
+	default:
+		return invalid()
+	}
+	return nil
 }
 
 func cleanArchiveName(name string) (string, error) {
