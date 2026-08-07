@@ -1,21 +1,124 @@
 name: CI
+
 on:
   push:
+    branches: [main]
   pull_request:
+
 permissions:
   contents: read
+
 jobs:
   test:
+    name: test
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - uses: actions/setup-go@0a12ed9d6a96ab950c8f026ed9f722fe0da7ef32 # v5.0.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.25.x'
+          go-version: stable
           cache: true
-      - run: gofmt -w . && git diff --exit-code
-      - run: go vet ./...
-      - run: go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
       - run: go test ./...
+
+  native-tests:
+    name: native-${{ matrix.os }}-go-${{ matrix.go }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15, windows-2025]
+        go: ['1.25.x', stable]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ matrix.go }}
+          cache: true
+      - run: go test ./...
+
+  race:
+    name: race
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: stable
+          cache: true
       - run: go test -race ./...
-      - run: go build ./cmd/gatehouse
+
+  vet:
+    name: vet
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: stable
+          cache: true
+      - run: test -z "$(gofmt -l .)"
+      - run: go vet ./...
+
+  staticcheck:
+    name: staticcheck
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: stable
+          cache: true
+      - run: go run honnef.co/go/tools/cmd/staticcheck@v0.7.0 ./...
+
+  vulnerability:
+    name: vulnerability
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: stable
+          cache: true
+      - run: go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
+
+  fuzz-smoke:
+    name: fuzz-smoke
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: stable
+          cache: true
+      - run: go test ./internal/policy -run='^$' -fuzz=FuzzLoad -fuzztime=10s
+      - run: go test ./internal/verify -run='^$' -fuzz=FuzzChecksumManifest -fuzztime=10s
+
+  release-validation:
+    name: release-validation
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: stable
+          cache: true
+      - uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
+        with:
+          distribution: goreleaser
+          version: v2.17.1
+          args: release --snapshot --clean --skip=publish
+      - run: go run ./cmd/releasecheck -dist dist
+      - name: Prove corruption blocks validation
+        shell: bash
+        run: |
+          test_dir="$(mktemp -d)"
+          cp dist/*.tar.gz dist/*.zip dist/checksums.txt "$test_dir/"
+          corrupt="$(find "$test_dir" -maxdepth 1 -type f \( -name '*.tar.gz' -o -name '*.zip' \) | sort | sed -n '2p')"
+          test -n "$corrupt"
+          printf 'corrupt' >> "$corrupt"
+          if go run ./cmd/releasecheck -dist "$test_dir" -smoke=false; then
+            echo "release validation accepted a corrupted non-first archive" >&2
+            exit 1
+          fi

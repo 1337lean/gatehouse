@@ -8,10 +8,13 @@ builds:
     goos: [linux, darwin, windows]
     goarch: [amd64, arm64]
 archives:
-  - formats: [tar.gz]
+  - name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats: [tar.gz]
     files:
       - LICENSE
       - README.md
+      - docs/policy.md
+      - testdata/demo-policy.json
     format_overrides:
       - goos: windows
         formats: [zip]
@@ -19,3 +22,5 @@ checksum:
   name_template: checksums.txt
 changelog:
   sort: asc
+release:
+  disable: true
