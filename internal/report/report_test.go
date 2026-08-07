@@ -55,3 +55,15 @@ func TestJSONOutputIsStable(t *testing.T) {
 		t.Fatalf("JSON output changed:\n got: %q\nwant: %q", output.String(), want)
 	}
 }
+
+func TestSARIFOutputIsStable(t *testing.T) {
+	result := Result{Valid: false, Findings: []Finding{{Rule: "required", Path: "README.md", Message: "missing"}}}
+	var output bytes.Buffer
+	if err := Write(&output, "sarif", result); err != nil {
+		t.Fatal(err)
+	}
+	const want = `{"$schema":"https://json.schemastore.org/sarif-2.1.0.json","runs":[{"results":[{"ruleId":"required","level":"error","message":{"text":"missing"},"locations":[{"physicalLocation":{"artifactLocation":{"uri":"README.md"}}}]}],"tool":{"driver":{"informationUri":"https://github.com/1337lean/gatehouse","name":"Gatehouse"}}}],"version":"2.1.0"}` + "\n"
+	if output.String() != want {
+		t.Fatalf("SARIF output changed:\n got: %q\nwant: %q", output.String(), want)
+	}
+}
