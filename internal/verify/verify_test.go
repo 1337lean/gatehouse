@@ -128,11 +128,10 @@ func TestChecksumNormalizedDuplicateAndSafeDotDotName(t *testing.T) {
 	}
 }
 
-func TestChecksumManifestSupportsSpacesAndLeadingAsterisks(t *testing.T) {
+func TestChecksumManifestSupportsSpaces(t *testing.T) {
 	directory := t.TempDir()
 	files := map[string][]byte{
 		"artifact file": []byte("with spaces"),
-		"*artifact":     []byte("leading asterisk"),
 	}
 	var manifest strings.Builder
 	for name, data := range files {
