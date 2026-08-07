@@ -3,8 +3,10 @@ package distcheck
 import (
 	"archive/tar"
 	"archive/zip"
+	"bytes"
 	"compress/gzip"
 	"crypto/sha256"
+	"encoding/binary"
 	"fmt"
 	"io"
 	"os"
@@ -15,8 +17,6 @@ import (
 )
 
 var fixtureEntries = map[string][]byte{
-	"gatehouse":                 []byte("test executable"),
-	"gatehouse.exe":             []byte("test executable"),
 	"LICENSE":                   []byte("license"),
 	"README.md":                 []byte("readme"),
 	"docs/policy.md":            []byte("policy"),
@@ -98,6 +98,54 @@ func TestVerifyRejectsIncompleteOrUnexpectedDistribution(t *testing.T) {
 	})
 }
 
+func TestVerifyRejectsInvalidRequiredEntries(t *testing.T) {
+	t.Run("wrong executable target", func(t *testing.T) {
+		directory, names := writeDistribution(t)
+		selected := target{os: "darwin", arch: "arm64"}
+		entries := archiveEntries(selected, false)
+		entries["gatehouse"] = fakeExecutable(target{os: "darwin", arch: "amd64"})
+		writeArchive(t, filepath.Join(directory, archiveName("1.2.3", selected)), selected, entries)
+		writeChecksums(t, directory, names)
+		if err := Verify(directory, false); err == nil || !strings.Contains(err.Error(), "darwin/arm64 binary") {
+			t.Fatalf("wrong-target executable error = %v", err)
+		}
+	})
+
+	t.Run("empty required asset", func(t *testing.T) {
+		directory, names := writeDistribution(t)
+		selected := target{os: "linux", arch: "arm64"}
+		entries := archiveEntries(selected, false)
+		entries["README.md"] = nil
+		writeArchive(t, filepath.Join(directory, archiveName("1.2.3", selected)), selected, entries)
+		writeChecksums(t, directory, names)
+		if err := Verify(directory, false); err == nil || !strings.Contains(err.Error(), `"README.md" is empty`) {
+			t.Fatalf("empty asset error = %v", err)
+		}
+	})
+
+	t.Run("zip CRC failure", func(t *testing.T) {
+		directory, names := writeDistribution(t)
+		name := archiveName("1.2.3", target{os: "windows", arch: "amd64"})
+		archivePath := filepath.Join(directory, name)
+		data, err := os.ReadFile(archivePath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		index := bytes.Index(data, fixtureEntries["README.md"])
+		if index < 0 {
+			t.Fatal("stored README data not found in ZIP fixture")
+		}
+		data[index] ^= 0xff
+		if err := os.WriteFile(archivePath, data, 0600); err != nil {
+			t.Fatal(err)
+		}
+		writeChecksums(t, directory, names)
+		if err := Verify(directory, false); err == nil || !strings.Contains(err.Error(), "checksum") {
+			t.Fatalf("ZIP CRC error = %v", err)
+		}
+	})
+}
+
 func writeDistribution(t *testing.T) (string, []string) {
 	t.Helper()
 	directory := t.TempDir()
@@ -110,31 +158,92 @@ func writeArchives(t *testing.T, directory, version string, omitPolicy bool) []s
 	t.Helper()
 	var names []string
 	for _, target := range expectedTargets {
-		extension := ".tar.gz"
-		if target.os == "windows" {
-			extension = ".zip"
-		}
-		name := fmt.Sprintf("gatehouse_%s_%s_%s%s", version, target.os, target.arch, extension)
-		entries := make(map[string][]byte, len(fixtureEntries))
-		for entryName, contents := range fixtureEntries {
-			if (target.os == "windows" && entryName == "gatehouse") || (target.os != "windows" && entryName == "gatehouse.exe") {
-				continue
-			}
-			if omitPolicy && entryName == "docs/policy.md" {
-				continue
-			}
-			entries[entryName] = contents
-		}
+		name := archiveName(version, target)
+		entries := archiveEntries(target, omitPolicy)
 		archivePath := filepath.Join(directory, name)
-		if target.os == "windows" {
-			writeZip(t, archivePath, entries)
-		} else {
-			writeTarGzip(t, archivePath, entries)
-		}
+		writeArchive(t, archivePath, target, entries)
 		names = append(names, name)
 	}
 	sort.Strings(names)
 	return names
+}
+
+func archiveName(version string, target target) string {
+	extension := ".tar.gz"
+	if target.os == "windows" {
+		extension = ".zip"
+	}
+	return fmt.Sprintf("gatehouse_%s_%s_%s%s", version, target.os, target.arch, extension)
+}
+
+func archiveEntries(target target, omitPolicy bool) map[string][]byte {
+	entries := make(map[string][]byte, len(fixtureEntries)+1)
+	for entryName, contents := range fixtureEntries {
+		if omitPolicy && entryName == "docs/policy.md" {
+			continue
+		}
+		entries[entryName] = contents
+	}
+	executableName := "gatehouse"
+	if target.os == "windows" {
+		executableName += ".exe"
+	}
+	entries[executableName] = fakeExecutable(target)
+	return entries
+}
+
+func writeArchive(t *testing.T, name string, target target, entries map[string][]byte) {
+	t.Helper()
+	if target.os == "windows" {
+		writeZip(t, name, entries)
+	} else {
+		writeTarGzip(t, name, entries)
+	}
+}
+
+func fakeExecutable(target target) []byte {
+	switch target.os {
+	case "linux":
+		data := make([]byte, 64)
+		copy(data, "\x7fELF")
+		data[4], data[5], data[6] = 2, 1, 1
+		binary.LittleEndian.PutUint16(data[16:18], 2)
+		machine := uint16(62)
+		if target.arch == "arm64" {
+			machine = 183
+		}
+		binary.LittleEndian.PutUint16(data[18:20], machine)
+		binary.LittleEndian.PutUint32(data[20:24], 1)
+		binary.LittleEndian.PutUint16(data[52:54], 64)
+		return data
+	case "darwin":
+		data := make([]byte, 32)
+		binary.LittleEndian.PutUint32(data[:4], 0xfeedfacf)
+		machine := uint32(0x01000007)
+		if target.arch == "arm64" {
+			machine = 0x0100000c
+		}
+		binary.LittleEndian.PutUint32(data[4:8], machine)
+		binary.LittleEndian.PutUint32(data[12:16], 2)
+		return data
+	case "windows":
+		data := make([]byte, 328)
+		copy(data, "MZ")
+		binary.LittleEndian.PutUint32(data[0x3c:0x40], 64)
+		copy(data[64:68], "PE\x00\x00")
+		machine := uint16(0x8664)
+		if target.arch == "arm64" {
+			machine = 0xaa64
+		}
+		binary.LittleEndian.PutUint16(data[68:70], machine)
+		binary.LittleEndian.PutUint16(data[84:86], 240)
+		binary.LittleEndian.PutUint16(data[86:88], 0x0002)
+		binary.LittleEndian.PutUint16(data[88:90], 0x020b)
+		binary.LittleEndian.PutUint32(data[196:200], 16)
+		return data
+	default:
+		return []byte("invalid")
+	}
 }
 
 func writeTarGzip(t *testing.T, name string, entries map[string][]byte) {
@@ -177,7 +286,7 @@ func writeZip(t *testing.T, name string, entries map[string][]byte) {
 	}
 	zipWriter := zip.NewWriter(file)
 	for _, entryName := range sortedEntryNames(entries) {
-		header := &zip.FileHeader{Name: entryName, Method: zip.Deflate}
+		header := &zip.FileHeader{Name: entryName, Method: zip.Store}
 		header.SetMode(0644)
 		if entryName == "gatehouse.exe" {
 			header.SetMode(0755)

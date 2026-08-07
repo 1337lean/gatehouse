@@ -71,7 +71,7 @@ go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
 go build ./cmd/gatehouse
 ```
 
-Every release is first built without publishing. A separate validator requires all six Linux, macOS, and Windows archives, verifies each checksum and required packaged asset, and runs the host-native executable. Only those already verified artifacts are attested and published. See [release process](docs/releasing.md).
+Every release is first built without publishing. A separate validator requires all six Linux, macOS, and Windows archives, verifies each checksum and required packaged asset, validates every executable's target format and architecture, and runs the host-native executable. Only those already verified artifacts are attested and published. See [release process](docs/releasing.md).
 
 See [architecture](docs/architecture.md), [threat model](docs/threat-model.md), [security policy](SECURITY.md), and [contributing guide](CONTRIBUTING.md).
 

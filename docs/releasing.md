@@ -3,7 +3,7 @@
 Gatehouse releases use an explicit build, verify, attest, and publish sequence. The release workflow is triggered only by a `v*` tag and uses least-privilege permissions per job.
 
 1. The build job runs formatting, unit, race, vet, Staticcheck, vulnerability, and one-minute fuzz gates. GoReleaser then produces candidates with publishing disabled.
-2. The verification job requires exactly the Linux, macOS, and Windows `amd64` and `arm64` archive matrix. `releasecheck` verifies every checksum, rejects missing or unexpected archives, checks the executable, license, README, policy reference, and example policy in every archive, and runs the executable for the verifier host.
+2. The verification job requires exactly the Linux, macOS, and Windows `amd64` and `arm64` archive matrix. `releasecheck` verifies every checksum, rejects missing or unexpected archives, fully reads every required entry, validates each executable's platform and architecture, and runs the executable for the verifier host. ZIP reads include CRC validation. Every archive must also contain a non-empty license, README, policy reference, and example policy.
 3. A regression step corrupts a non-first archive and requires validation to fail. The attestation and publication jobs depend on successful verification, so corruption necessarily prevents publication.
 4. GitHub generates provenance attestations for the verified archive and checksum digests.
 5. The final job creates the public release by uploading the same workflow artifact that passed verification. GoReleaser itself is configured not to publish.
