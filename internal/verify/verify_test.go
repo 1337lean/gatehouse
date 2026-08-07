@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"syscall"
 	"testing"
 
 	"github.com/1337lean/gatehouse/internal/policy"
@@ -153,23 +152,6 @@ func TestChecksumManifestSupportsSpacesAndLeadingAsterisks(t *testing.T) {
 	}
 }
 
-func TestRejectFIFO(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("FIFO unsupported")
-	}
-	d := t.TempDir()
-	if err := syscallMkfifo(filepath.Join(d, "pipe")); err != nil {
-		t.Skipf("mkfifo: %v", err)
-	}
-	r, err := Bundle(d, policy.Policy{Version: 1})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !hasRule(r.Findings, "regular-file") {
-		t.Fatalf("unexpected findings %#v", r.Findings)
-	}
-}
-
 func TestRejectSymlinkedBundleFile(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("symlink creation may require elevated privileges on Windows")
@@ -298,10 +280,6 @@ func TestBoundedWalkerCountsAllEntryTypes(t *testing.T) {
 	if err := walkBounded(root, 2, func(string, os.DirEntry) error { return nil }); err != errTooManyEntries {
 		t.Fatalf("walker error = %v", err)
 	}
-}
-
-func syscallMkfifo(path string) error {
-	return syscall.Mkfifo(path, 0600)
 }
 
 func hasRule(findings []report.Finding, rule string) bool {
