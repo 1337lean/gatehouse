@@ -2,6 +2,7 @@ package app
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -21,13 +22,14 @@ const (
 )
 
 func Run(args []string, out, errw io.Writer, version string) int {
+	out = &trackingWriter{writer: out}
+	errw = &trackingWriter{writer: errw}
 	if len(args) == 0 {
 		return usage(errw)
 	}
 	switch args[0] {
 	case "version":
-		fmt.Fprintln(out, version)
-		return ExitOK
+		return writeExit(out, ExitOK, "%s\n", version)
 	case "init":
 		return initCmd(args[1:], out, errw)
 	case "policy":
@@ -40,108 +42,158 @@ func Run(args []string, out, errw io.Writer, version string) int {
 	case "help", "-h", "--help":
 		return usage(out)
 	default:
-		fmt.Fprintf(errw, "unknown command %q\n", args[0])
+		if code := writeExit(errw, ExitUsage, "unknown command %q\n", args[0]); code != ExitUsage {
+			return code
+		}
 		return usage(errw)
 	}
 }
 
 func usage(w io.Writer) int {
-	fmt.Fprintln(w, "Usage: gatehouse <init|policy check|verify|version> [options]")
-	return ExitUsage
+	return writeExit(w, ExitUsage, "Usage: gatehouse <init|policy check|verify|version> [options]\n\nExit codes: 0 success, 1 policy/bundle violation, 2 usage or invalid policy, 3 operational/output failure.\n")
 }
 
 func initCmd(args []string, out, errw io.Writer) int {
 	f := flag.NewFlagSet("init", flag.ContinueOnError)
-	f.SetOutput(errw)
+	flagOutput := &trackingWriter{writer: errw}
+	f.SetOutput(flagOutput)
 	path := f.String("policy", "gatehouse.json", "policy path")
 	force := f.Bool("force", false, "overwrite")
 	if f.Parse(args) != nil {
+		if flagOutput.err != nil {
+			return ExitInternal
+		}
 		return ExitUsage
 	}
 	if f.NArg() != 0 {
-		fmt.Fprintln(errw, "init does not accept positional arguments")
-		return ExitUsage
+		return writeExit(errw, ExitUsage, "init does not accept positional arguments\n")
 	}
-	b, _ := json.MarshalIndent(policy.Default, "", "  ")
+	b, err := json.MarshalIndent(policy.Default, "", "  ")
+	if err != nil {
+		return writeExit(errw, ExitInternal, "encode default policy: %v\n", err)
+	}
 	b = append(b, '\n')
 	if e := writePolicy(*path, b, *force); e != nil {
 		if os.IsExist(e) {
-			fmt.Fprintln(errw, "policy already exists (use --force)")
-			return ExitUsage
+			return writeExit(errw, ExitUsage, "policy already exists (use --force)\n")
 		}
-		fmt.Fprintln(errw, e)
-		return ExitInternal
+		return writeExit(errw, ExitInternal, "%v\n", e)
 	}
-	fmt.Fprintf(out, "created %s\n", *path)
-	return ExitOK
+	return writeExit(out, ExitOK, "created %s\n", *path)
 }
 
 func policyCmd(args []string, out, errw io.Writer) int {
 	f := flag.NewFlagSet("policy check", flag.ContinueOnError)
-	f.SetOutput(errw)
+	flagOutput := &trackingWriter{writer: errw}
+	f.SetOutput(flagOutput)
 	path := f.String("policy", "gatehouse.json", "policy path")
 	format := f.String("format", "human", "human or json")
 	if f.Parse(args) != nil {
+		if flagOutput.err != nil {
+			return ExitInternal
+		}
 		return ExitUsage
 	}
 	if f.NArg() != 0 {
-		fmt.Fprintln(errw, "policy check does not accept positional arguments")
-		return ExitUsage
+		return writeExit(errw, ExitUsage, "policy check does not accept positional arguments\n")
 	}
 	if *format != "human" && *format != "json" {
-		fmt.Fprintln(errw, "unknown format")
-		return ExitUsage
+		return writeExit(errw, ExitUsage, "unknown format\n")
 	}
 	p, e := policy.Load(*path)
 	valid := e == nil
-	if *format == "json" {
-		json.NewEncoder(out).Encode(map[string]any{"valid": valid, "error": errString(e)})
-	} else if e != nil {
-		fmt.Fprintf(errw, "invalid policy: %v\n", e)
-	} else {
-		fmt.Fprintln(out, "policy is valid")
-	}
+	resultCode := ExitOK
 	if e != nil {
-		return ExitViolation
+		resultCode = ExitInternal
+		if errors.Is(e, policy.ErrInvalid) {
+			resultCode = ExitUsage
+		}
+	}
+	if *format == "json" {
+		if encodeErr := json.NewEncoder(out).Encode(map[string]any{"valid": valid, "error": errString(e)}); encodeErr != nil {
+			return writeExit(errw, ExitInternal, "write report: %v\n", encodeErr)
+		}
+	} else if e != nil {
+		if code := writeExit(errw, resultCode, "invalid policy: %v\n", e); code != resultCode {
+			return code
+		}
+	} else {
+		if code := writeExit(out, ExitOK, "policy is valid\n"); code != ExitOK {
+			return code
+		}
 	}
 	_ = p
-	return ExitOK
+	return resultCode
 }
 
 func verifyCmd(args []string, out, errw io.Writer) int {
 	f := flag.NewFlagSet("verify", flag.ContinueOnError)
-	f.SetOutput(errw)
+	flagOutput := &trackingWriter{writer: errw}
+	f.SetOutput(flagOutput)
 	path := f.String("policy", "gatehouse.json", "policy path")
 	format := f.String("format", "human", "human, json, or sarif")
 	if f.Parse(args) != nil {
+		if flagOutput.err != nil {
+			return ExitInternal
+		}
 		return ExitUsage
 	}
 	if f.NArg() != 1 {
-		fmt.Fprintln(errw, "verify requires a bundle directory")
-		return ExitUsage
+		return writeExit(errw, ExitUsage, "verify requires a bundle directory\n")
 	}
 	if *format != "human" && *format != "json" && *format != "sarif" {
-		fmt.Fprintln(errw, "unknown format")
-		return ExitUsage
+		return writeExit(errw, ExitUsage, "unknown format\n")
 	}
 	p, e := policy.Load(*path)
 	if e != nil {
-		fmt.Fprintf(errw, "load policy: %v\n", e)
-		return ExitInternal
+		code := ExitInternal
+		if errors.Is(e, policy.ErrInvalid) {
+			code = ExitUsage
+		}
+		return writeExit(errw, code, "load policy: %v\n", e)
 	}
 	r, e := verify.Bundle(filepath.Clean(f.Arg(0)), p)
 	if e != nil {
-		fmt.Fprintln(errw, e)
-		return ExitInternal
+		return writeExit(errw, ExitInternal, "%v\n", e)
 	}
 	if e = report.Write(out, *format, r); e != nil {
-		fmt.Fprintln(errw, e)
-		return ExitUsage
+		return writeExit(errw, ExitInternal, "write report: %v\n", e)
 	}
 	if !r.Valid {
 		return ExitViolation
 	}
 	return ExitOK
+}
+
+func writeExit(w io.Writer, successCode int, format string, args ...any) int {
+	message := fmt.Sprintf(format, args...)
+	written, err := io.WriteString(w, message)
+	if err == nil && written != len(message) {
+		err = io.ErrShortWrite
+	}
+	if err != nil {
+		return ExitInternal
+	}
+	return successCode
+}
+
+type trackingWriter struct {
+	writer io.Writer
+	err    error
+}
+
+func (w *trackingWriter) Write(data []byte) (int, error) {
+	if w.err != nil {
+		return 0, w.err
+	}
+	written, err := w.writer.Write(data)
+	if err == nil && written != len(data) {
+		err = io.ErrShortWrite
+	}
+	if err != nil {
+		w.err = err
+	}
+	return written, err
 }
 
 func writePolicy(path string, data []byte, force bool) error {

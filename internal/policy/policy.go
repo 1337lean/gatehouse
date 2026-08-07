@@ -45,6 +45,11 @@ type Provenance struct {
 
 var Default = Policy{Version: 1, Checksums: "SHA256SUMS", DeniedExtensions: []string{".exe", ".dll"}, MaxFileSize: 100 * 1024 * 1024, RequiredGlobs: []string{"README*"}}
 
+// ErrInvalid identifies policy content or semantics that the user must fix. I/O
+// and filesystem errors are deliberately left outside this class so callers can
+// distinguish configuration mistakes from operational failures.
+var ErrInvalid = errors.New("invalid policy")
+
 func Load(path string) (Policy, error) {
 	info, err := os.Lstat(path)
 	if err != nil {
@@ -79,21 +84,24 @@ func Load(path string) (Policy, error) {
 		return Policy{}, fmt.Errorf("policy exceeds %d bytes", MaxPolicySize)
 	}
 	if err := strictjson.Validate(b); err != nil {
-		return Policy{}, fmt.Errorf("decode policy: %w", err)
+		return Policy{}, fmt.Errorf("%w: decode policy: %v", ErrInvalid, err)
 	}
 	if err := validatePolicyKeys(b); err != nil {
-		return Policy{}, fmt.Errorf("decode policy: %w", err)
+		return Policy{}, fmt.Errorf("%w: decode policy: %v", ErrInvalid, err)
 	}
 	var p Policy
 	d := json.NewDecoder(bytes.NewReader(b))
 	d.DisallowUnknownFields()
 	if err := d.Decode(&p); err != nil {
-		return p, fmt.Errorf("decode policy: %w", err)
+		return p, fmt.Errorf("%w: decode policy: %v", ErrInvalid, err)
 	}
 	if err := d.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		return p, errors.New("decode policy: trailing data")
+		return p, fmt.Errorf("%w: decode policy: trailing data", ErrInvalid)
 	}
-	return p, Validate(p)
+	if err := Validate(p); err != nil {
+		return p, fmt.Errorf("%w: %v", ErrInvalid, err)
+	}
+	return p, nil
 }
 
 func validatePolicyKeys(data []byte) error {

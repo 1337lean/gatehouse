@@ -43,3 +43,15 @@ func TestSARIFOmitEscapingArtifactLocations(t *testing.T) {
 		t.Fatalf("artifact URI = %#v", artifact["uri"])
 	}
 }
+
+func TestJSONOutputIsStable(t *testing.T) {
+	result := Result{Valid: false, Findings: []Finding{{Rule: "required", Path: "README.md", Message: "missing"}}}
+	var output bytes.Buffer
+	if err := Write(&output, "json", result); err != nil {
+		t.Fatal(err)
+	}
+	const want = `{"valid":false,"findings":[{"rule":"required","path":"README.md","message":"missing"}]}` + "\n"
+	if output.String() != want {
+		t.Fatalf("JSON output changed:\n got: %q\nwant: %q", output.String(), want)
+	}
+}

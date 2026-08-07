@@ -40,16 +40,42 @@ type sarifMessage struct {
 }
 
 func Write(w io.Writer, format string, r Result) error {
+	checked := &checkedWriter{writer: w}
+	w = checked
+	var err error
 	switch format {
 	case "human":
-		return writeHuman(w, r)
+		err = writeHuman(w, r)
 	case "json":
-		return json.NewEncoder(w).Encode(r)
+		err = json.NewEncoder(w).Encode(r)
 	case "sarif":
-		return writeSARIF(w, r)
+		err = writeSARIF(w, r)
 	default:
 		return fmt.Errorf("unknown output format %q", format)
 	}
+	if err != nil {
+		return err
+	}
+	return checked.err
+}
+
+type checkedWriter struct {
+	writer io.Writer
+	err    error
+}
+
+func (w *checkedWriter) Write(data []byte) (int, error) {
+	if w.err != nil {
+		return 0, w.err
+	}
+	written, err := w.writer.Write(data)
+	if err == nil && written != len(data) {
+		err = io.ErrShortWrite
+	}
+	if err != nil {
+		w.err = err
+	}
+	return written, err
 }
 
 func writeHuman(w io.Writer, r Result) error {

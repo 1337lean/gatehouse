@@ -3,11 +3,26 @@ package app
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
 )
+
+var errTestWrite = errors.New("test writer failed")
+
+type failingWriter struct {
+	partial bool
+}
+
+func (w failingWriter) Write(data []byte) (int, error) {
+	if w.partial && len(data) > 0 {
+		return 1, nil
+	}
+	return 0, errTestWrite
+}
 
 func TestCLIIntegration(t *testing.T) {
 	d := t.TempDir()
@@ -44,6 +59,93 @@ func TestSARIFAndExitCodes(t *testing.T) {
 	}
 	if code := Run([]string{"verify", "--policy", filepath.Join(d, "missing"), d}, &out, &errOut, "test"); code != ExitInternal {
 		t.Fatalf("internal exit = %d", code)
+	}
+}
+
+func TestCLIExitCodeContract(t *testing.T) {
+	directory := t.TempDir()
+	validPolicy := filepath.Join(directory, "valid.json")
+	invalidPolicy := filepath.Join(directory, "invalid.json")
+	denyingPolicy := filepath.Join(directory, "denying.json")
+	for path, contents := range map[string]string{
+		validPolicy:   `{"version":1}`,
+		invalidPolicy: `{`,
+		denyingPolicy: `{"version":1,"requiredGlobs":["missing"]}`,
+	} {
+		if err := os.WriteFile(path, []byte(contents), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	tests := []struct {
+		name string
+		args []string
+		want int
+	}{
+		{"invalid flag", []string{"verify", "--unknown"}, ExitUsage},
+		{"invalid policy", []string{"policy", "check", "--policy", invalidPolicy}, ExitUsage},
+		{"policy denial", []string{"verify", "--policy", denyingPolicy, directory}, ExitViolation},
+		{"success", []string{"verify", "--policy", validPolicy, directory}, ExitOK},
+		{"operational failure", []string{"verify", "--policy", filepath.Join(directory, "missing"), directory}, ExitInternal},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			if got := Run(test.args, &stdout, &stderr, "test"); got != test.want {
+				t.Fatalf("exit = %d, want %d; stdout=%q stderr=%q", got, test.want, stdout.String(), stderr.String())
+			}
+		})
+	}
+}
+
+func TestAllOutputFailuresAreOperational(t *testing.T) {
+	directory := t.TempDir()
+	validPolicy := filepath.Join(directory, "valid.json")
+	invalidPolicy := filepath.Join(directory, "invalid.json")
+	denyingPolicy := filepath.Join(directory, "denying.json")
+	for path, contents := range map[string]string{
+		validPolicy:   `{"version":1}`,
+		invalidPolicy: `{`,
+		denyingPolicy: `{"version":1,"requiredGlobs":["missing"]}`,
+	} {
+		if err := os.WriteFile(path, []byte(contents), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	tests := []struct {
+		name      string
+		args      []string
+		failOut   bool
+		failError bool
+		partial   bool
+	}{
+		{"version", []string{"version"}, true, false, false},
+		{"help partial write", []string{"help"}, true, false, true},
+		{"missing command", nil, false, true, false},
+		{"unknown command partial write", []string{"unknown"}, false, true, true},
+		{"flag diagnostics", []string{"verify", "--unknown"}, false, true, false},
+		{"policy human success", []string{"policy", "check", "--policy", validPolicy}, true, false, false},
+		{"policy human error", []string{"policy", "check", "--policy", invalidPolicy}, false, true, true},
+		{"policy json", []string{"policy", "check", "--format", "json", "--policy", validPolicy}, true, false, true},
+		{"verify human success", []string{"verify", "--policy", validPolicy, directory}, true, false, false},
+		{"verify human denial", []string{"verify", "--policy", denyingPolicy, directory}, true, false, true},
+		{"verify json", []string{"verify", "--format", "json", "--policy", validPolicy, directory}, true, false, false},
+		{"verify sarif", []string{"verify", "--format", "sarif", "--policy", validPolicy, directory}, true, false, true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var stdout, stderr io.Writer = io.Discard, io.Discard
+			if test.failOut {
+				stdout = failingWriter{partial: test.partial}
+			}
+			if test.failError {
+				stderr = failingWriter{partial: test.partial}
+			}
+			if got := Run(test.args, stdout, stderr, "test"); got != ExitInternal {
+				t.Fatalf("exit = %d, want %d", got, ExitInternal)
+			}
+		})
 	}
 }
 

@@ -1,6 +1,7 @@
 package policy
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -30,6 +31,8 @@ func TestRejectUnknownAndVersion(t *testing.T) {
 		os.WriteFile(p, []byte(s), 0600)
 		if _, err := Load(p); err == nil {
 			t.Fatalf("accepted %s", s)
+		} else if !errors.Is(err, ErrInvalid) {
+			t.Fatalf("error %q is not classified as invalid policy", err)
 		}
 	}
 }
@@ -47,6 +50,34 @@ func TestRejectDuplicateKeysAndOversizedPolicy(t *testing.T) {
 		if _, err := Load(path); err == nil {
 			t.Errorf("accepted %s policy", name)
 		}
+	}
+}
+
+func TestPolicySizeBoundary(t *testing.T) {
+	directory := t.TempDir()
+	base := []byte(`{"version":1}`)
+	for _, test := range []struct {
+		name    string
+		size    int
+		wantErr bool
+	}{
+		{name: "exact limit", size: MaxPolicySize},
+		{name: "limit plus one", size: MaxPolicySize + 1, wantErr: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			contents := append(append([]byte{}, base...), []byte(strings.Repeat(" ", test.size-len(base)))...)
+			name := filepath.Join(directory, strings.ReplaceAll(test.name, " ", "-"))
+			if err := os.WriteFile(name, contents, 0600); err != nil {
+				t.Fatal(err)
+			}
+			_, err := Load(name)
+			if test.wantErr && (err == nil || !strings.Contains(err.Error(), "exceeds")) {
+				t.Fatalf("error = %v, want size-limit error", err)
+			}
+			if !test.wantErr && err != nil {
+				t.Fatalf("exact-limit policy failed: %v", err)
+			}
+		})
 	}
 }
 
@@ -86,6 +117,13 @@ func TestValidateRejectsDuplicateAndNonPortableGlobs(t *testing.T) {
 
 func FuzzLoad(f *testing.F) {
 	f.Add([]byte(`{"version":1}`))
+	f.Add([]byte(`{"version":1,"requiredGlobs":["深い/✓.json"]}`))
+	f.Add([]byte(`{"version":1,"version":1}`))
+	f.Add([]byte(`{"version":1,"requiredGlobs":["*.json","*.json"]}`))
+	f.Add([]byte(`{"version":1,"unknown":{"a":{"b":{"c":{"d":{"e":true}}}}}}`))
+	f.Add([]byte(`{"version":1,"provenance":{"globs":["*.json"],"requiredSubjects":["a","a"]}}`))
+	f.Add([]byte(`{"version":1,"maxFileSize":9223372036854775807}`))
+	f.Add([]byte(`{"version":1,"maxFileSize":-1}`))
 	f.Fuzz(func(t *testing.T, b []byte) {
 		d := t.TempDir()
 		p := filepath.Join(d, "p")
