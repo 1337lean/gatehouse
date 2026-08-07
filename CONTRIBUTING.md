@@ -1,13 +1,16 @@
 # Contributing
 
-Use Go 1.25, keep runtime code standard-library-only, add focused tests, and preserve stable rule names and exit codes. Before proposing a change, run:
+Go 1.25 is the oldest supported toolchain. Keep runtime code standard-library-only, add focused tests, and preserve stable rule names and exit codes. Before proposing a change, run:
 
 ```sh
 gofmt -w .
 go vet ./...
 go test ./...
 go test -race ./...
+go run honnef.co/go/tools/cmd/staticcheck@v0.7.0 ./...
+go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
+go run github.com/goreleaser/goreleaser/v2@v2.17.1 check
 go build ./cmd/gatehouse
 ```
 
-Commits should be focused and explain why behavior changes. Security reports must follow SECURITY.md.
+Pull requests also run short smoke sessions for every fuzz target and build and validate the entire release archive matrix. Weekly CI runs longer fuzz sessions. Commits should be focused and explain why behavior changes. Security reports must follow SECURITY.md.

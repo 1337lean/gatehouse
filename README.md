@@ -1,5 +1,8 @@
 # Gatehouse
 
+[![CI](https://github.com/1337lean/gatehouse/actions/workflows/ci.yml/badge.svg)](https://github.com/1337lean/gatehouse/actions/workflows/ci.yml)
+[![Release](https://github.com/1337lean/gatehouse/actions/workflows/release.yml/badge.svg)](https://github.com/1337lean/gatehouse/actions/workflows/release.yml)
+
 Gatehouse is a dependency-free Go CLI that validates release bundles at a CI or deployment boundary. It checks a versioned JSON policy, file checksums and constraints, SBOM structure, and provenance subject binding.
 
 ## Install
@@ -27,7 +30,7 @@ Commands:
 - `verify [--policy ...] [--format human|json|sarif] BUNDLE` validates a directory.
 - `version` prints the build version.
 
-Exit codes are stable: `0` success, `1` policy/bundle violation, `2` command usage error, `3` operational/internal error.
+Exit codes are stable: `0` success, `1` a well-formed policy denies the bundle, `2` command usage or invalid policy configuration, and `3` an operational, verification, or output-write failure. Human, JSON, and SARIF output failures always return `3`; truncated output is never reported as success.
 
 ## Runnable demos
 
@@ -56,13 +59,19 @@ The runtime imports only the Go standard library. Gatehouse does not execute bun
 
 ## Development
 
+Go 1.25 is the oldest supported toolchain. CI exercises Go 1.25 and the current stable Go release on Linux, macOS, and Windows.
+
 ```sh
 gofmt -w .
 go vet ./...
 go test ./...
 go test -race ./...
+go run honnef.co/go/tools/cmd/staticcheck@v0.7.0 ./...
+go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
 go build ./cmd/gatehouse
 ```
+
+Every release is first built without publishing. A separate validator requires all six Linux, macOS, and Windows archives, verifies each checksum and required packaged asset, and runs the host-native executable. Only those already verified artifacts are attested and published. See [release process](docs/releasing.md).
 
 See [architecture](docs/architecture.md), [threat model](docs/threat-model.md), [security policy](SECURITY.md), and [contributing guide](CONTRIBUTING.md).
 
