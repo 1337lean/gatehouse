@@ -98,6 +98,22 @@ func TestCLIExitCodeContract(t *testing.T) {
 	}
 }
 
+func TestPolicyCheckJSONIsStable(t *testing.T) {
+	directory := t.TempDir()
+	policyPath := filepath.Join(directory, "policy.json")
+	if err := os.WriteFile(policyPath, []byte(`{"version":1}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	if code := Run([]string{"policy", "check", "--format", "json", "--policy", policyPath}, &stdout, &stderr, "test"); code != ExitOK {
+		t.Fatalf("exit = %d, stderr = %q", code, stderr.String())
+	}
+	const want = `{"error":"","valid":true}` + "\n"
+	if stdout.String() != want {
+		t.Fatalf("policy JSON changed:\n got: %q\nwant: %q", stdout.String(), want)
+	}
+}
+
 func TestAllOutputFailuresAreOperational(t *testing.T) {
 	directory := t.TempDir()
 	validPolicy := filepath.Join(directory, "valid.json")
